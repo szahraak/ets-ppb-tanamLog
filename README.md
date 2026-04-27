@@ -1,5 +1,4 @@
-Project ETS Pemrograman Berbasis Perangkat Bergerak (E)
-Siti Zahra Ananda K | 5025231037
+Project ETS Pemrograman Berbasis Perangkat Bergerak (E) | Siti Zahra Ananda K | 5025231037
 
 # 🌿 TanamLog
 
