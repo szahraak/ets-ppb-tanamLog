@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "185689222074",
+    "project_id": "tanamlog",
+    "storage_bucket": "tanamlog.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:185689222074:android:cacdf91a930086bd63cb83",
+        "android_client_info": {
+          "package_name": "com.example.tanamlog"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHVIo79Jzm1ZGFxVMpWRUbRMS2kvF9X1c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
