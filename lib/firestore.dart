@@ -121,9 +121,49 @@ class FirestoreService {
         .snapshots();
   }
 
-  // Mark schedule as completed
+  // Mark schedule as completed and automatically create a care log entry
   Future<void> completeSchedule(String scheduleId) async {
-    return await schedules.doc(scheduleId).update({'completed': true});
+    // 1. Ambil data schedule terlebih dahulu
+    final scheduleDoc = await schedules.doc(scheduleId).get();
+    if (!scheduleDoc.exists) return;
+
+    final data = scheduleDoc.data() as Map<String, dynamic>;
+    final plantId = data['plantId'] as String;
+    final action = data['action'] as String;
+
+    // 2. Tentukan activityType berdasarkan teks action (Mapping)
+    String activityType = 'watered'; // default
+    final a = action.toLowerCase();
+    if (a.contains('fertiliz')) {
+      activityType = 'fertilized';
+    } else if (a.contains('repot')) {
+      activityType = 'repotted';
+    } else if (a.contains('prun')) {
+      activityType = 'pruned';
+    }
+
+    // 3. Gunakan WriteBatch agar pembuatan log dan penyelesaian task terjadi bersamaan
+    WriteBatch batch = FirebaseFirestore.instance.batch();
+
+    // Buat referensi untuk log baru di sub-koleksi tanaman
+    DocumentReference logRef = plants.doc(plantId).collection('careLogs').doc();
+    
+    batch.set(logRef, {
+      'plantId': plantId,
+      'activityType': activityType,
+      'dateTime': FieldValue.serverTimestamp(), // Catat waktu penyelesaian sekarang
+      'note': 'Completed via smart reminder',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    // Update status schedule menjadi completed
+    batch.update(schedules.doc(scheduleId), {
+      'completed': true,
+      'completedAt': FieldValue.serverTimestamp(),
+    });
+
+    // 4. Eksekusi batch
+    return await batch.commit();
   }
 
   // Delete schedule

@@ -443,7 +443,7 @@ class _HomeAppBar extends StatelessWidget {
       return Image.network(
         photoUrl, 
         fit: BoxFit.cover, 
-        errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.person_rounded, color: AppColors.onPrimary, size: 20))
+        errorBuilder: (_, _, _) => const Center(child: Icon(Icons.person_rounded, color: AppColors.onPrimary, size: 20))
       );
     }
     return const Center(child: Icon(Icons.person_rounded, color: AppColors.onPrimary, size: 20));
