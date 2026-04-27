@@ -74,14 +74,18 @@ lib/
 ├── screens/                 # UI Screens
 │   ├── login.dart          # Login Screen
 │   ├── register.dart       # Registration Screen
-│   ├── homepage.dart       # Home/Garden Screen
+│   ├── homepage.dart       # Home Screen
+│   ├── garden.dart         # Garden Screen (list of plants)
 │   ├── plant_detail.dart   # Plant Detail Screen
 │   ├── form_plant.dart     # Add/Edit Plant Form
-│   ├── profile.dart        # User Profile Screen
-│   └── reminder.dart       # Reminders Screen
+│   ├── form_log.dart       # Add/Edit Care Log Form
+│   ├── form_journal.dart   # Add/Edit Health Journal Form
+│   ├── reminder.dart       # Reminders Screen
+│   └── profile.dart        # User Profile Screen
 │
 ├── models/                  # Data Models
-│   └── plant.dart          # Plant Model
+│   ├── care_log.dart        # Care Log Model
+│   └── health_journal.dart  # Health Journal Model
 │
 └── services/               # Business Logic
     └── notification_services.dart  # Notification Service
