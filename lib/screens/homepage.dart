@@ -4,13 +4,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tanamlog/firestore.dart';
 import 'package:tanamlog/theme.dart';
+import 'dart:convert';
 
 // ── Models ────────────────────────────────────────────────────────────────────
 class Plant {
-  final String id, name, species, emoji, waterLabel, photoUrl;
+  final String id, name, species, emoji, waterLabel, photoUrl, location;
   final Color bgColor;
+  final int wateringPeriod;
   const Plant({required this.id, required this.name, required this.species,
-      required this.emoji, required this.photoUrl, required this.waterLabel, required this.bgColor});
+      required this.emoji, required this.photoUrl, required this.waterLabel, required this.bgColor, required this.location, required this.wateringPeriod});
 
   /// Construct a Plant from a Firestore document.
   factory Plant.fromFirestore(DocumentSnapshot doc) {
@@ -24,6 +26,8 @@ class Plant {
       photoUrl: data['photoUrl'] as String? ?? '',
       waterLabel: _waterLabel(wateringPeriod),
       bgColor: Color(data['bgColor'] as int? ?? 0xFFE8F5E9),
+      location: data['location'] as String? ?? 'indoor',
+      wateringPeriod: wateringPeriod,
     );
   }
 
@@ -96,18 +100,49 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── Location ──────────────────────────────────────────────────────────────
-  String _locationLabel = 'Location not detected';
+  
+  // 1. Gunakan variabel static agar nilainya bertahan selama aplikasi tidak ditutup sepenuhnya
+  static String _cachedLocationLabel = 'Location not detected';
+
+  // Inisialisasi label dengan nilai cache
+  late String _locationLabel = _cachedLocationLabel;
   bool _locationLoading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // 2. Cek izin secara otomatis saat halaman Home dimuat
+    _autoFetchLocationIfPermitted();
+  }
+
+  Future<void> _autoFetchLocationIfPermitted() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      // Jika izin sudah pernah diberikan (WhileInUse atau Always), ambil lokasi diam-diam
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        await _requestLocation();
+      }
+    } catch (_) {
+      // Abaikan error jika berjalan di background
+    }
+  }
+
   Future<void> _requestLocation() async {
+    if (!mounted) return; 
     setState(() => _locationLoading = true);
+    
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        setState(() {
-          _locationLabel = 'Location services disabled';
-          _locationLoading = false;
-        });
+        if (mounted) { // <--- Tambahkan kurung kurawal di sini
+          setState(() {
+            _locationLabel = 'Location services disabled';
+            _locationLoading = false;
+          });
+        }
         return;
       }
 
@@ -117,10 +152,12 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       if (permission == LocationPermission.deniedForever ||
           permission == LocationPermission.denied) {
-        setState(() {
-          _locationLabel = 'Location permission denied';
-          _locationLoading = false;
-        });
+        if (mounted) { // <--- Tambahkan kurung kurawal di sini
+          setState(() {
+            _locationLabel = 'Location permission denied';
+            _locationLoading = false;
+          });
+        }
         return;
       }
 
@@ -128,17 +165,20 @@ class _HomeScreenState extends State<HomeScreen> {
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      // Store coordinates so weather widget can use them later
-      setState(() {
-        _locationLabel =
-            '${position.latitude.toStringAsFixed(2)}°, ${position.longitude.toStringAsFixed(2)}°';
-        _locationLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _locationLabel = '${position.latitude.toStringAsFixed(2)}°, ${position.longitude.toStringAsFixed(2)}°';
+          _cachedLocationLabel = _locationLabel; 
+          _locationLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _locationLabel = 'Could not get location';
-        _locationLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _locationLabel = 'Could not get location';
+          _locationLoading = false;
+        });
+      }
     }
   }
 
@@ -180,7 +220,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           Text('My Garden',
                             style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(color: AppColors.onSurface)),
-                          if (plants.isNotEmpty)
+                                
+                          // PERBAIKAN 1: Tombol 'See all' hanya muncul jika tanaman > 6
+                          if (plants.length > 6)
                             GestureDetector(
                               onTap: () =>
                                   Navigator.pushNamed(context, '/garden'),
@@ -221,7 +263,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           horizontal: AppSpacing.containerMargin),
                       sliver: SliverGrid(
                         delegate: SliverChildListDelegate(
-                          plants.map((p) => _PlantCard(plant: p)).toList(),
+                          // PERBAIKAN 2: Gunakan .take(6) agar maksimal hanya 6 card yang dirender
+                          plants.take(6).map((p) => _PlantCard(plant: p)).toList(),
                         ),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
@@ -269,6 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () => Navigator.pushNamed(context, 'add-plant'),
         child: Icon(Icons.add_rounded, size: 18),
       ),
+      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
@@ -278,6 +322,42 @@ class _HomeScreenState extends State<HomeScreen> {
     return snapshot.data!.docs
         .map((doc) => Plant.fromFirestore(doc))
         .toList();
+  }
+
+  // ── Bottom Navigation (Material 3) ────────────────────────────────────────
+  Widget _buildBottomNav() {
+    return NavigationBar(
+      selectedIndex: 0, // 'Reminders' aktif
+      backgroundColor: AppColors.surface,
+      indicatorColor: AppColors.primaryContainer,
+      onDestinationSelected: (int index) {
+        if (index == 1) {
+          Navigator.pushReplacementNamed(context, 'garden');
+        } else if (index == 2) {
+          Navigator.pushReplacementNamed(context, 'reminder');
+        } else if (index == 3) {
+          Navigator.pushReplacementNamed(context, 'profile');
+        }
+      },
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.home_filled, color: AppColors.primaryDark),
+          label: 'Home',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.local_florist, color: AppColors.outline),
+          label: 'Garden',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.calendar_month, color: AppColors.outline),
+          label: 'Reminders',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.person, color: AppColors.outline),
+          label: 'Profile',
+        ),
+      ],
+    );
   }
 }
 
@@ -346,13 +426,31 @@ class _TodayTasksSliver extends StatelessWidget {
 class _HomeAppBar extends StatelessWidget {
   final String greeting;
   final User? user;
+  
   const _HomeAppBar({required this.greeting, required this.user});
+
+  // Helper untuk membaca format foto (Base64 atau URL biasa)
+  Widget _buildAvatar(String? photoUrl) {
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      if (photoUrl.startsWith('data:image')) {
+        try {
+          final base64String = photoUrl.split(',').last;
+          return Image.memory(base64Decode(base64String), fit: BoxFit.cover);
+        } catch (e) {
+          return const Center(child: Icon(Icons.person_rounded, color: AppColors.onPrimary, size: 20));
+        }
+      }
+      return Image.network(
+        photoUrl, 
+        fit: BoxFit.cover, 
+        errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.person_rounded, color: AppColors.onPrimary, size: 20))
+      );
+    }
+    return const Center(child: Icon(Icons.person_rounded, color: AppColors.onPrimary, size: 20));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final displayName = user?.displayName?.split(' ').first ?? 'there';
-    final photoUrl = user?.photoURL;
-
     return SliverAppBar(
       backgroundColor: AppColors.surface,
       floating: true,
@@ -362,62 +460,73 @@ class _HomeAppBar extends StatelessWidget {
       automaticallyImplyLeading: false,
       toolbarHeight: 72,
       flexibleSpace: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.containerMargin, vertical: 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(greeting,
-                      style: const TextStyle(
-                        fontFamily: 'Plus Jakarta Sans',
-                        fontSize: 13, fontWeight: FontWeight.w500,
-                        color: AppColors.outline)),
-                    const SizedBox(height: 2),
-                    Text('Hi, $displayName!',
-                      style: const TextStyle(
-                        fontFamily: 'Plus Jakarta Sans',
-                        fontSize: 20, fontWeight: FontWeight.w700,
-                        color: AppColors.onSurface)),
-                  ],
-                ),
-              ),
-              Container(
-                width: 42, height: 42,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.1),
-                  borderRadius: AppRadius.fullBR,
-                ),
-                child: const Icon(Icons.notifications_rounded,
-                    color: AppColors.primary, size: 20),
-              ),
-              const SizedBox(width: AppSpacing.stackSm),
-              // Avatar: photo from Google/provider, or fallback icon
-              Container(
-                width: 42, height: 42,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryContainer,
-                  borderRadius: AppRadius.fullBR,
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: photoUrl != null
-                    ? Image.network(photoUrl, fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => const Icon(
-                          Icons.person_rounded,
-                          color: AppColors.onPrimary, size: 20))
-                    : const Center(
-                        child: Icon(Icons.person_rounded,
-                            color: AppColors.onPrimary, size: 20),
+        child: user == null 
+          ? const SizedBox.shrink()
+          : StreamBuilder<DocumentSnapshot>(
+              // Mendengarkan perubahan data profil user dari Firestore secara real-time
+              stream: FirebaseFirestore.instance.collection('users').doc(user!.uid).snapshots(),
+              builder: (context, snapshot) {
+                // Fallback awal jika data masih loading
+                String displayName = user?.displayName?.split(' ').first ?? 'there';
+                String? photoUrl = user?.photoURL;
+
+                // Jika data Firestore sudah masuk, gunakan data tersebut
+                if (snapshot.hasData && snapshot.data!.exists) {
+                  final data = snapshot.data!.data() as Map<String, dynamic>;
+                  final nameFromDb = data['displayName'] as String?;
+                  if (nameFromDb != null && nameFromDb.isNotEmpty) {
+                    displayName = nameFromDb.split(' ').first;
+                  }
+                  photoUrl = data['profilePicture'] as String?;
+                }
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.containerMargin, vertical: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(greeting,
+                              style: const TextStyle(
+                                fontFamily: 'Plus Jakarta Sans',
+                                fontSize: 13, fontWeight: FontWeight.w500,
+                                color: AppColors.outline)),
+                            const SizedBox(height: 2),
+                            Text('Hi, $displayName!',
+                              style: const TextStyle(
+                                fontFamily: 'Plus Jakarta Sans',
+                                fontSize: 20, fontWeight: FontWeight.w700,
+                                color: AppColors.onSurface)),
+                          ],
+                        ),
                       ),
-              ),
-            ],
-          ),
-        ),
+                      
+                      // ── Tombol Foto Profil ──
+                      GestureDetector(
+                        onTap: () {
+                          // Menggunakan pushReplacementNamed agar sinkron dengan perilaku Bottom Navigation
+                          Navigator.pushReplacementNamed(context, 'profile');
+                        },
+                        child: Container(
+                          width: 42, height: 42,
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryContainer,
+                            borderRadius: AppRadius.fullBR,
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: _buildAvatar(photoUrl),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
       ),
     );
   }
@@ -623,6 +732,46 @@ class _PlantCard extends StatelessWidget {
   final Plant plant;
   const _PlantCard({required this.plant});
 
+  // Helper untuk merender gambar (Base64, Network, atau Fallback Emoji)
+  Widget _buildImage() {
+    if (plant.photoUrl.isNotEmpty) {
+      if (plant.photoUrl.startsWith('data:image')) {
+        try {
+          final base64String = plant.photoUrl.split(',').last;
+          return Image.memory(
+            base64Decode(base64String),
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+          );
+        } catch (e) {
+          return _buildFallback();
+        }
+      } else {
+        return Image.network(
+          plant.photoUrl,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          errorBuilder: (context, error, stackTrace) => _buildFallback(),
+        );
+      }
+    }
+    return _buildFallback();
+  }
+
+  // Fallback jika tanaman tidak memiliki foto atau foto gagal dimuat
+  Widget _buildFallback() {
+    return Container(
+      color: plant.bgColor,
+      width: double.infinity,
+      height: double.infinity,
+      child: Center(
+        child: Text(plant.emoji, style: const TextStyle(fontSize: 52)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -634,6 +783,9 @@ class _PlantCard extends StatelessWidget {
             'plantId': plant.id,
             'plantName': plant.name,
             'plantImageUrl': plant.photoUrl,
+            'plantLocation': plant.location,
+            'plantSpecies': plant.species,
+            'plantWateringPeriod': plant.wateringPeriod,
           },
         );
       },
@@ -642,64 +794,60 @@ class _PlantCard extends StatelessWidget {
           color: AppColors.surfaceContainerLowest,
           borderRadius: AppRadius.xlBR,
           boxShadow: [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 12, offset: const Offset(0, 4)),
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 12, 
+                offset: const Offset(0, 4)),
           ],
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Container(
-              color: plant.bgColor,
-              width: double.infinity,
-              child: Center(
-                child: Text(plant.emoji, style: const TextStyle(fontSize: 52)),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _buildImage(), // Memanggil helper gambar di sini
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(plant.name,
+                    style: const TextStyle(
+                      fontFamily: 'Plus Jakarta Sans',
+                      fontSize: 13, fontWeight: FontWeight.w600,
+                      color: AppColors.onSurface),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(plant.species,
+                    style: const TextStyle(
+                      fontFamily: 'Plus Jakarta Sans',
+                      fontSize: 11, color: AppColors.outline)),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.tertiary.withValues(alpha: 0.1),
+                      borderRadius: AppRadius.fullBR,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('💧', style: TextStyle(fontSize: 10)),
+                        const SizedBox(width: 4),
+                        Text(plant.waterLabel,
+                          style: const TextStyle(
+                            fontFamily: 'Plus Jakarta Sans',
+                            fontSize: 11, fontWeight: FontWeight.w600,
+                            color: AppColors.tertiary)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(plant.name,
-                  style: const TextStyle(
-                    fontFamily: 'Plus Jakarta Sans',
-                    fontSize: 13, fontWeight: FontWeight.w600,
-                    color: AppColors.onSurface),
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 2),
-                Text(plant.species,
-                  style: const TextStyle(
-                    fontFamily: 'Plus Jakarta Sans',
-                    fontSize: 11, color: AppColors.outline)),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.tertiary.withValues(alpha: 0.1),
-                    borderRadius: AppRadius.fullBR,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('💧', style: TextStyle(fontSize: 10)),
-                      const SizedBox(width: 4),
-                      Text(plant.waterLabel,
-                        style: const TextStyle(
-                          fontFamily: 'Plus Jakarta Sans',
-                          fontSize: 11, fontWeight: FontWeight.w600,
-                          color: AppColors.tertiary)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }

@@ -1,13 +1,28 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tanamlog/firestore.dart';
 import 'package:tanamlog/theme.dart';
 
 class FormPlantScreen extends StatefulWidget {
-  const FormPlantScreen({super.key});
+  final String? plantId; // null for add mode, plantId for edit mode
+  final String? plantName;
+  final String? plantSpecies;
+  final String? plantLocation;
+  final int? plantWateringPeriod;
+  final String? plantImageUrl;
+
+  const FormPlantScreen({
+    super.key,
+    this.plantId,
+    this.plantName,
+    this.plantSpecies,
+    this.plantLocation,
+    this.plantWateringPeriod,
+    this.plantImageUrl,
+  });
 
   @override
   State<FormPlantScreen> createState() => _FormPlantScreenState();
@@ -20,16 +35,29 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
   final List<int> wateringPeriods = [1, 3, 7, 14, 30];
 
   String? _selectedLocation;
-  int? _selectedWateringPeriod;
+  int _selectedWateringPeriod = 1; // Initialize with default value
 
   bool _isLoading = false;
   String _errorCode = "";
 
   final FirestoreService firestoreService = FirestoreService();
 
-  // ── IMAGE ─────────────────────────
   File? _imageFile;
   final ImagePicker _picker = ImagePicker();
+
+  bool get _isEditMode => widget.plantId != null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isEditMode) {
+      // Pre-fill form with existing plant data
+      _nameController.text = widget.plantName ?? '';
+      _speciesController.text = widget.plantSpecies ?? '';
+      _selectedLocation = widget.plantLocation ?? 'indoor';
+      _selectedWateringPeriod = widget.plantWateringPeriod ?? 1;
+    }
+  }
 
   @override
   void dispose() {
@@ -38,12 +66,11 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
     super.dispose();
   }
 
-  // ── UNSAVED CHANGES ─────────────────
   bool get _hasUnsavedChanges {
     return _nameController.text.isNotEmpty ||
         _speciesController.text.isNotEmpty ||
         _selectedLocation != null ||
-        _selectedWateringPeriod != null ||
+        _selectedWateringPeriod != 1 ||
         _imageFile != null;
   }
 
@@ -81,9 +108,13 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
     }
   }
 
-  // ── IMAGE PICK ─────────────────────
   Future<void> _pickImage(ImageSource source) async {
-    final picked = await _picker.pickImage(source: source);
+    final picked = await _picker.pickImage(
+      source: source,
+      imageQuality: 60, 
+      maxWidth: 800,    
+      maxHeight: 800,   
+    );
 
     if (picked != null) {
       setState(() {
@@ -123,29 +154,23 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
     );
   }
 
-  Future<String?> _uploadImage(String uid) async {
+  Future<String?> _imageToBase64() async {
     if (_imageFile == null) return null;
 
-    final fileName = DateTime.now().millisecondsSinceEpoch.toString();
-
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('plants')
-        .child(uid)
-        .child('$fileName.jpg');
-
-    await ref.putFile(_imageFile!);
-    return await ref.getDownloadURL();
+    try {
+      final bytes = await _imageFile!.readAsBytes();
+      final base64String = base64Encode(bytes);
+      return 'data:image/jpeg;base64,$base64String';
+    } catch (e) {
+      throw Exception('Failed to convert image: $e');
+    }
   }
 
-  // ── SUBMIT ─────────────────────────
   Future<void> submit() async {
     final name = _nameController.text.trim();
     final species = _speciesController.text.trim();
 
-    if (name.isEmpty ||
-        _selectedLocation == null ||
-        _selectedWateringPeriod == null) {
+    if (name.isEmpty || _selectedLocation == null) {
       setState(() => _errorCode = "Please fill all required fields");
       return;
     }
@@ -162,33 +187,50 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
     });
 
     try {
-      final imageUrl = await _uploadImage(uid);
+      final imageData = await _imageToBase64();
 
-      final plantRef = await firestoreService.addPlant(
-        uid,
-        name,
-        species.isEmpty ? null : species,
-        imageUrl ?? '',
-        _selectedLocation!,
-        _selectedWateringPeriod!,
-      );
+      if (_isEditMode) {
+        // Update existing plant
+        final updateData = {
+          'name': name,
+          'species': species.isEmpty ? null : species,
+          'location': _selectedLocation,
+          'wateringPeriod': _selectedWateringPeriod,
+        };
+        
+        // Only update image if a new one was selected
+        if (imageData != null) {
+          updateData['photoUrl'] = imageData;
+        }
 
-      await firestoreService.addSchedule(
-        uid,
-        plantRef.id,
-        'Water',
-        DateTime.now(),
-      );
+        await firestoreService.updatePlant(widget.plantId!, updateData);
+      } else {
+        // Add new plant
+        final plantRef = await firestoreService.addPlant(
+          uid,
+          name,
+          species.isEmpty ? null : species,
+          imageData ?? '',
+          _selectedLocation!,
+          _selectedWateringPeriod,
+        );
+
+        await firestoreService.addSchedule(
+          uid,
+          plantRef.id,
+          'Water',
+          DateTime.now(),
+        );
+      }
 
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      setState(() => _errorCode = "Failed to save plant");
+      setState(() => _errorCode = "Failed to save plant: ${e.toString()}");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // ── UI ─────────────────────────────
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -215,13 +257,12 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
                 const SizedBox(height: 40),
 
                 FormHeader(
-                  title: "Add New Plant",
+                  title: _isEditMode ? "Edit Plant" : "Add New Plant",
                   onClose: _handleExit,
                 ),
 
                 const SizedBox(height: 20),
 
-                // IMAGE
                 GestureDetector(
                   onTap: _showImageSourceActionSheet,
                   child: Container(
@@ -252,54 +293,58 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
 
                 const SizedBox(height: 20),
 
-                // NAME
                 const Text('Plant Name'),
                 TextField(controller: _nameController),
 
                 const SizedBox(height: 20),
 
-                // SPECIES
                 const Text('Species (optional)'),
                 TextField(controller: _speciesController),
 
                 const SizedBox(height: 20),
 
-                // LOCATION
+                // ✅ FIXED LOCATION (ChoiceChip)
                 const Text('Location'),
+                const SizedBox(height: 10),
                 Row(
                   children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () =>
-                            setState(() => _selectedLocation = "indoor"),
-                        child: const Text("Indoor"),
-                      ),
+                    ChoiceChip(
+                      label: const Text("Indoor"),
+                      selected: _selectedLocation == "indoor",
+                      onSelected: (_) =>
+                          setState(() => _selectedLocation = "indoor"),
                     ),
                     const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () =>
-                            setState(() => _selectedLocation = "outdoor"),
-                        child: const Text("Outdoor"),
-                      ),
+                    ChoiceChip(
+                      label: const Text("Outdoor"),
+                      selected: _selectedLocation == "outdoor",
+                      onSelected: (_) =>
+                          setState(() => _selectedLocation = "outdoor"),
                     ),
                   ],
                 ),
 
                 const SizedBox(height: 20),
 
-                // WATERING
                 DropdownButtonFormField<int>(
-                  hint: const Text("Watering period"),
-                  initialValue: 1,
+                  initialValue: _selectedWateringPeriod,
                   items: wateringPeriods
                       .map((e) => DropdownMenuItem(
                             value: e,
                             child: Text("$e days"),
                           ))
                       .toList(),
-                  onChanged: (value) =>
-                      setState(() => _selectedWateringPeriod = value),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => _selectedWateringPeriod = value);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Watering period',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
 
                 const SizedBox(height: 20),
@@ -318,7 +363,7 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
                     child: _isLoading
                         ? const CircularProgressIndicator(
                             color: Colors.white)
-                        : const Text('Add Plant'),
+                        : Text(_isEditMode ? 'Save Plant' : 'Add Plant'),
                   ),
                 ),
 
@@ -332,7 +377,6 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
   }
 }
 
-// ── HEADER COMPONENT ─────────────────────────
 class FormHeader extends StatelessWidget {
   final String title;
   final VoidCallback onClose;

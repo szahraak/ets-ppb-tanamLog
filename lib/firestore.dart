@@ -66,7 +66,19 @@ class FirestoreService {
 
   // Delete plant
   Future<void> deletePlant(String plantId) async {
-    return await plants.doc(plantId).delete();
+    final associatedSchedules = await schedules
+        .where('plantId', isEqualTo: plantId)
+        .get();
+
+    WriteBatch batch = FirebaseFirestore.instance.batch();
+
+    for (var doc in associatedSchedules.docs) {
+      batch.delete(doc.reference);
+    }
+
+    batch.delete(plants.doc(plantId));
+
+    return await batch.commit();
   }
 
   // ── Schedule Methods ──────────────────────────────────────────────────────
@@ -154,6 +166,21 @@ class FirestoreService {
         .snapshots();
   }
 
+  // Update care log
+  Future<void> updateCareLog(
+    String plantId, 
+    String careLogId, 
+    String activityType, 
+    DateTime dateTime, 
+    String? note
+  ) async {
+    return await plants.doc(plantId).collection('careLogs').doc(careLogId).update({
+      'activityType': activityType,
+      'dateTime': Timestamp.fromDate(dateTime),
+      'note': note,
+    });
+  }
+
   // Delete care log
   Future<void> deleteCareLog(String plantId, String careLogId) async {
     return await plants
@@ -198,6 +225,23 @@ class FirestoreService {
         .collection('healthJournal')
         .orderBy('dateTime', descending: true)
         .snapshots();
+  }
+
+  // Update health journal entry
+  Future<void> updateHealthJournal(
+    String plantId, 
+    String journalId, 
+    String currentHealth, 
+    String observation, 
+    String? photoUrl, 
+    DateTime dateTime
+  ) async {
+    return await plants.doc(plantId).collection('healthJournal').doc(journalId).update({
+      'currentHealth': currentHealth,
+      'observation': observation,
+      'photoUrl': photoUrl,
+      'dateTime': Timestamp.fromDate(dateTime),
+    });
   }
 
   // Delete health journal entry
