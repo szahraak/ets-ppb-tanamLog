@@ -12,6 +12,7 @@ import 'firebase_options.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
+import 'package:bot_toast/bot_toast.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,6 +48,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       navigatorKey: navigatorKey,
       title: 'TanamLog',
+      builder: BotToastInit(),
+      navigatorObservers: [BotToastNavigatorObserver()],
       theme: appTheme(),
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
