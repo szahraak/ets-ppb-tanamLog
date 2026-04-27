@@ -209,7 +209,7 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
         // Update Notifikasi: Cancel yang lama, buat yang baru
         int notifId = widget.plantId.hashCode;
         await NotificationService.cancelNotification(notifId);
-        await NotificationService.scheduleWatering(notifId, name, _selectedWateringPeriod);
+        await NotificationService.scheduleWatering(id: notifId, plantName: name, nextDate: DateTime.now().add(Duration(days:_selectedWateringPeriod)));
       } else {
         // Add new plant
         final plantRef = await firestoreService.addPlant(
@@ -221,7 +221,7 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
           _selectedWateringPeriod,
         );
 
-        await NotificationService.scheduleWatering(plantRef.id.hashCode, name, _selectedWateringPeriod);
+        await NotificationService.scheduleWatering(id: plantRef.id.hashCode, plantName: name, nextDate: DateTime.now().add(Duration(days:_selectedWateringPeriod)));
 
         await firestoreService.addSchedule(
           uid,

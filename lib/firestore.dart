@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:tanamlog/services/notification_services.dart';
 
 class FirestoreService {
   final CollectionReference users = FirebaseFirestore.instance.collection('users');
@@ -81,6 +82,20 @@ class FirestoreService {
     return await batch.commit();
   }
 
+  Future<bool> checkIfAlreadyWateredToday(String plantId) async {
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+    
+    final snapshot = await plants
+        .doc(plantId)
+        .collection('careLogs')
+        .where('activityType', isEqualTo: 'watered')
+        .where('dateTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+        .get();
+
+    return snapshot.docs.isNotEmpty;
+  }
+
   // ── Schedule Methods ──────────────────────────────────────────────────────
   // Add a schedule
   Future<DocumentReference> addSchedule(
@@ -130,10 +145,13 @@ class FirestoreService {
     final data = scheduleDoc.data() as Map<String, dynamic>;
     final plantId = data['plantId'] as String;
     final action = data['action'] as String;
+    final uid = data['uid'] as String;
 
     // 2. Tentukan activityType berdasarkan teks action (Mapping)
-    String activityType = 'watered'; // default
+    String activityType = 'watered'; 
     final a = action.toLowerCase();
+    bool isWatering = a.contains('water');
+    
     if (a.contains('fertiliz')) {
       activityType = 'fertilized';
     } else if (a.contains('repot')) {
@@ -142,27 +160,55 @@ class FirestoreService {
       activityType = 'pruned';
     }
 
-    // 3. Gunakan WriteBatch agar pembuatan log dan penyelesaian task terjadi bersamaan
+    // 3. Ambil data tanaman untuk mendapatkan wateringPeriod (Strategi A)
+    final plantDoc = await plants.doc(plantId).get();
+    final plantData = plantDoc.data() as Map<String, dynamic>;
+    final int wateringPeriod = plantData['wateringPeriod'] ?? 7;
+    final String plantName = plantData['name'] ?? 'Tanaman';
+
+    // 4. Gunakan WriteBatch agar semua perubahan data konsisten
     WriteBatch batch = FirebaseFirestore.instance.batch();
 
-    // Buat referensi untuk log baru di sub-koleksi tanaman
+    // Buat log aktivitas
     DocumentReference logRef = plants.doc(plantId).collection('careLogs').doc();
-    
     batch.set(logRef, {
       'plantId': plantId,
       'activityType': activityType,
-      'dateTime': FieldValue.serverTimestamp(), // Catat waktu penyelesaian sekarang
+      'dateTime': FieldValue.serverTimestamp(),
       'note': 'Completed via smart reminder',
       'createdAt': FieldValue.serverTimestamp(),
     });
 
-    // Update status schedule menjadi completed
+    // Tandai schedule lama sebagai completed
     batch.update(schedules.doc(scheduleId), {
       'completed': true,
       'completedAt': FieldValue.serverTimestamp(),
     });
 
-    // 4. Eksekusi batch
+    // Jika aktivitasnya adalah menyiram, buat jadwal baru otomatis
+    if (isWatering) {
+      DateTime nextDate = DateTime.now().add(Duration(days: wateringPeriod));
+      
+      // Tambah jadwal baru ke Firestore
+      DocumentReference nextScheduleRef = schedules.doc();
+      batch.set(nextScheduleRef, {
+        'uid': uid,
+        'plantId': plantId,
+        'action': 'Watering',
+        'dueDate': Timestamp.fromDate(nextDate),
+        'completed': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Jadwalkan notifikasi lokal di HP (Jam 7 Pagi)
+      await NotificationService.scheduleWatering(
+        id: plantId.hashCode, // Menggunakan hash plantId agar ID notifikasi unik per tanaman
+        plantName: plantName,
+        nextDate: nextDate,
+      );
+    }
+
+    // 5. Eksekusi semua perintah database dalam satu waktu
     return await batch.commit();
   }
 
@@ -228,6 +274,51 @@ class FirestoreService {
         .collection('careLogs')
         .doc(careLogId)
         .delete();
+  }
+
+  Future<void> handleManualWatering(String uid, String plantId) async {
+    // 1. Ambil data tanaman
+    final plantDoc = await plants.doc(plantId).get();
+    if (!plantDoc.exists) return;
+    final plantData = plantDoc.data() as Map<String, dynamic>;
+    
+    // 2. Batalkan notifikasi yang sudah ada agar tidak double
+    await NotificationService.cancelNotification(plantId.hashCode);
+
+    // 3. Cari jika ada schedule 'Watering' yang pending untuk tanaman ini, lalu hapus/selesaikan
+    final pendingSchedules = await schedules
+        .where('plantId', isEqualTo: plantId)
+        .where('completed', isEqualTo: false)
+        .where('action', isEqualTo: 'Watering')
+        .get();
+
+    WriteBatch batch = FirebaseFirestore.instance.batch();
+    for (var doc in pendingSchedules.docs) {
+      batch.update(doc.reference, {'completed': true, 'completedAt': FieldValue.serverTimestamp()});
+    }
+
+    // 4. Buat jadwal baru untuk masa depan
+    int period = plantData['wateringPeriod'] ?? 7;
+    DateTime nextDate = DateTime.now().add(Duration(days: period));
+    
+    DocumentReference nextScheduleRef = schedules.doc();
+    batch.set(nextScheduleRef, {
+      'uid': uid,
+      'plantId': plantId,
+      'action': 'Watering',
+      'dueDate': Timestamp.fromDate(nextDate),
+      'completed': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+
+    // Jadwalkan notifikasi HP baru
+    await NotificationService.scheduleWatering(
+      id: plantId.hashCode,
+      plantName: plantData['name'],
+      nextDate: nextDate,
+    );
   }
 
   // ── Health Journal Methods ────────────────────────────────────────────────

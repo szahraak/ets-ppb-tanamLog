@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:tanamlog/firestore.dart';
 import 'package:tanamlog/theme.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class LogActivityScreen extends StatefulWidget {
   final String plantId;
@@ -286,10 +287,16 @@ class _LogActivityScreenState extends State<LogActivityScreen> {
     try {
       final dateTime = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, _selectedTime.hour, _selectedTime.minute);
       final note = _noteController.text.isEmpty ? null : _noteController.text.trim();
+      final String? uid = FirebaseAuth.instance.currentUser?.uid;
 
       if (widget.careLogId == null) {
         // Mode Tambah Baru
         await _firestoreService.addCareLog(widget.plantId, _selectedActivity, dateTime, note);
+
+        // Jika aktivitas adalah menyiram, panggil Orchestrator
+        if (_selectedActivity == 'watered' && uid != null) {
+          await _firestoreService.handleManualWatering(uid, widget.plantId);
+        }
       } else {
         // Mode Edit
         await _firestoreService.updateCareLog(widget.plantId, widget.careLogId!, _selectedActivity, dateTime, note);
