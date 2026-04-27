@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:tanamlog/firestore.dart';
 import 'package:tanamlog/theme.dart';
 import 'dart:convert';
+import 'package:tanamlog/services/notification_services.dart';
 
 // ── Models ────────────────────────────────────────────────────────────────────
 class Plant {
@@ -113,6 +114,10 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // 2. Cek izin secara otomatis saat halaman Home dimuat
     _autoFetchLocationIfPermitted();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService.requestPermission(context);
+    });
   }
 
   Future<void> _autoFetchLocationIfPermitted() async {

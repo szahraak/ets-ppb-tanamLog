@@ -11,9 +11,27 @@ import 'package:tanamlog/theme.dart';
 import 'firebase_options.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:awesome_notifications/awesome_notifications.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Inisialisasi Awesome Notifications
+  AwesomeNotifications().initialize(
+    null, // icon default (null pakai icon app)
+    [
+      NotificationChannel(
+        channelKey: 'watering_channel',
+        channelName: 'Watering Reminders',
+        channelDescription: 'Notification channel for plant watering schedules',
+        defaultColor: const Color(0xFF2D6A4F),
+        ledColor: Colors.white,
+        importance: NotificationImportance.High,
+      )
+    ],
+    debug: true
+  );
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );

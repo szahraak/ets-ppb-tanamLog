@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tanamlog/firestore.dart';
 import 'package:tanamlog/theme.dart';
+import 'package:tanamlog/services/notification_services.dart';
 
 class FormPlantScreen extends StatefulWidget {
   final String? plantId; // null for add mode, plantId for edit mode
@@ -204,6 +205,11 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
         }
 
         await firestoreService.updatePlant(widget.plantId!, updateData);
+    
+        // Update Notifikasi: Cancel yang lama, buat yang baru
+        int notifId = widget.plantId.hashCode;
+        await NotificationService.cancelNotification(notifId);
+        await NotificationService.scheduleWatering(notifId, name, _selectedWateringPeriod);
       } else {
         // Add new plant
         final plantRef = await firestoreService.addPlant(
@@ -214,6 +220,8 @@ class _FormPlantScreenState extends State<FormPlantScreen> {
           _selectedLocation!,
           _selectedWateringPeriod,
         );
+
+        await NotificationService.scheduleWatering(plantRef.id.hashCode, name, _selectedWateringPeriod);
 
         await firestoreService.addSchedule(
           uid,
