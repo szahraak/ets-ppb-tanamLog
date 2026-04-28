@@ -150,6 +150,6 @@ flutter run -d <device_id>
 
 ## 📽️ Demo Video
 
-Click Thumbnail!
+https://github.com/user-attachments/assets/a73c473b-36c8-4dae-8c92-cbad84ba2073
 
-[![Demo Video Click Here!!!](https://img.youtube.com/vi/8pxsHV0F1VU/0.jpg)](https://www.youtube.com/watch?v=8pxsHV0F1VU)
+
